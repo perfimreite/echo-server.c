@@ -3,11 +3,18 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
-// #include <string.h>
 
 #define PORT 42069
+#define MAX_CONNECTIONS 32
 
-int main ()
+void get_client_input(int client_fd)
+{
+    char client_buffer[512] = {0};
+    read(client_fd, client_buffer, sizeof(client_buffer));
+    printf("Client message: %s", client_buffer);
+}
+
+int main (void)
 {
     int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -17,23 +24,27 @@ int main ()
         0,
     };
 
-    int b = bind(socket_fd, (struct sockaddr*)&addr, sizeof(addr));
-    if (b < 0) {
-        printf("ERROR: could not start server...\n");
+    if (bind(socket_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        fprintf(stderr, "ERROR: could not bind socket to adress\n");
         return 1;
     };
-    listen(socket_fd, 32);
-    printf("Server is listening on port %d\n", PORT);
+
+    listen(socket_fd, MAX_CONNECTIONS);
+    printf("Server is listening on port %d...\n", PORT);
     
-    int client_id = 1;
     while (1) {
         int client_fd = accept(socket_fd, 0, 0);
-        printf("Connection established with user %d.\n", client_id++);
+        if (client_fd < 0) {
+            fprintf(stderr, "ERROR: could not accept client\n");
+            return 1;
+        }
+
+        printf("Connection established with client\n");
+        char message[] = "Connection established with server\n";
+        write(client_fd, message, sizeof(message));
 
         while (1) {
-            char client_buffer[1024] = {0};
-            read(client_fd, client_buffer, sizeof(client_buffer));
-            printf("Client message: %s", client_buffer);
+            get_client_input(client_fd);
         }
 
         close(client_fd);
