@@ -1,2 +1,7 @@
-main: main.c
-	gcc -o main main.c
+all: server client
+
+server: server.c
+	gcc -Wall -Wextra -o server server.c
+
+client: client.c
+	gcc -Wall -Wextra -o client client.c
