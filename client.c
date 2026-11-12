@@ -39,16 +39,18 @@ int main()
         } else if (strcmp(r_buff, STATUS_OK) == 0) {
             // ok
         } else {
-            printf("%s", r_buff);
+            printf("[Server] %s", r_buff);
         }
 
         fgets(t_buff, MAX_MSG_SIZE, stdin);
         write(sock, t_buff, strlen(t_buff));
     }
 
-    // shutdown(sock, SHUT_WR);
-    close(sock);
-    printf("closed connection\n");
+    if (close(sock) < 0) {
+        perror("ERROR: server close failed\n");
+        return 1;
+    }
+    printf("Server closed connection\n");
 
     return 0;
 }
