@@ -239,10 +239,8 @@ int main (void)
     printf("INFO: Created socket\n");
 
     const struct sockaddr_in addr = {
-        AF_INET,
-        htons(PORT),
-        {0},
-        {0},
+        .sin_family = AF_INET,
+        .sin_port = htons(PORT),
     };
 
     if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) != 0) {

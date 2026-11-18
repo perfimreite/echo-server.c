@@ -8,7 +8,7 @@
 
 #define PORT 6969
 #define MAX_MSG_SIZE 512
-#define POLL_TIMEOUT 10
+#define POLL_TIMEOUT 100 // milliseconds
 
 typedef struct {
     char *name;

@@ -4,8 +4,11 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <arpa/inet.h>
 
 #include "common.h"
+
+#define LOCALHOST "127.0.0.1"
 
 static void read_line(const char *prompt, char *buff)
 {
@@ -18,18 +21,31 @@ static void read_line(const char *prompt, char *buff)
 char t_buff[MAX_MSG_SIZE];
 char r_buff[MAX_MSG_SIZE];
 
-int main()
+int main(int argc, char **argv)
 {
+    char *server_ip;
+    if (argc == 1) {
+        server_ip = LOCALHOST;
+    } else if (argc == 2) {
+        server_ip = argv[1];
+    } else {
+        fprintf(stderr, "ERROR: unexpected number of arguments: %d, wants 0 or 1\n", argc);
+        return 1;
+    }
+
     int sock = socket(AF_INET, SOCK_STREAM, 0);
 
     // char *username = NULL;
 
     const struct sockaddr_in addr = {
-        AF_INET,
-        htons(PORT),
-        {0},
-        {0},
+        .sin_family = AF_INET,
+        .sin_port = htons(PORT),
     };
+
+    if (inet_pton(AF_INET, server_ip, (void *)&addr.sin_addr) <= 0) {
+        perror("ERROR: failed to asign IP address");
+        return 1;
+    }
 
     if (connect(sock, (const struct sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("ERROR: connect failed");
