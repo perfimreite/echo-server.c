@@ -2,95 +2,231 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <unistd.h>
 #include <stdbool.h>
 #include <string.h>
 #include <pthread.h>
+#include <stdlib.h>
 
 #include "common.h"
+
+static char t_buff[MAX_MSG_SIZE];
+static char r_buff[MAX_MSG_SIZE];
+
+#define MAX_USERNAME_SIZE 32
+#define MAX_PASSWORD_SIZE 32
 
 #define MAX_CONNS 32
 pthread_t threads[MAX_CONNS];
 
-char t_buff[MAX_MSG_SIZE];
-char r_buff[MAX_MSG_SIZE];
+#define MAX_USERS 256
+static User users[MAX_USERS];
+static size_t user_count = 0;
 
-static size_t trim_suffix(char *s, size_t l)
+#define MAX_SESSIONS 32
+
+typedef struct {
+    int fd;
+    User *user;
+} Session;
+
+static void print_users()
 {
-    if (l == 0) return 0;
-    if (s[l-1] == '\n') {
-        s[--l] = '\0';
+    printf("--- USER TABLE ---\n");
+    for (size_t i = 0; i < user_count; i++) {
+        printf("%zu %s %s\n", i, users[i].name, users[i].logged_in ? "logged_in" : "logged_out");
     }
-    if (l == 0) return 0;
-    if (s[l-1] == '\r') {
-        s[--l] = '\0';
-    }
-    return l;
+    printf("------------------\n");
 }
 
-static bool print_client_message(int client)
+static void trim_suffix(char *s)
+{
+    if (s[strlen(s)-1] == '\n') {
+        s[strlen(s)-1] = '\0';
+    }
+    if (s[strlen(s)-1] == '\r') {
+        s[strlen(s)-1] = '\0';
+    }
+}
+
+static User *get_user_by_name(const char *name)
+{
+    for (User *u = users; u < &users[user_count]; u++) {
+        if (strcmp(name, u->name) == 0) {
+            return u;
+        }
+    }
+    return NULL;
+}
+
+static void log_out(Session *s)
+{
+    if (s->user) {
+        s->user->logged_in = false;
+        s->user = NULL;
+
+        sprintf(t_buff, "You were logged out.\n");
+    } else {
+        sprintf(t_buff, "You are not currently logged in.\n");
+    }
+
+    write(s->fd, t_buff, strlen(t_buff));
+}
+
+static void create_account(Session *s)
+{
+    User user = {0};
+    user.name = malloc(MAX_USERNAME_SIZE + 1);
+    user.password = malloc(MAX_PASSWORD_SIZE + 1);
+
+    while (true) {
+        sprintf(t_buff, "name: \n");
+        write(s->fd, t_buff, strlen(t_buff));
+        read_from_socket(s->fd, r_buff);
+        trim_suffix(r_buff);
+
+        if (!get_user_by_name(r_buff)) {
+            strcpy(user.name, r_buff);
+            break;
+        }
+
+        sprintf(t_buff, "Name is already taken!\n");
+        write(s->fd, t_buff, strlen(t_buff));
+    }
+
+    sprintf(t_buff, "password: \n");
+    write(s->fd, t_buff, strlen(t_buff));
+    read_from_socket(s->fd, r_buff);
+    trim_suffix(r_buff);
+    strcpy(user.password, r_buff);
+
+    user.logged_in = true;
+    users[user_count++] = user;
+
+    printf("INFO: created new user '%s'.\n", user.name);
+
+    sprintf(t_buff, "Account was created successfully! You are now logged in as '%s'.\n", user.name);
+    write(s->fd, t_buff, strlen(t_buff));
+
+    s->user = &users[user_count - 1];
+}
+
+static void log_in(Session *s)
+{
+    User *user = NULL;
+
+    while (true) {
+        sprintf(t_buff, "name: \n");
+        write(s->fd, t_buff, strlen(t_buff));
+        read_from_socket(s->fd, r_buff);
+        trim_suffix(r_buff);
+
+        user = get_user_by_name(r_buff);
+        if (user) {
+            break;
+        }
+
+        sprintf(t_buff, "No such username exists.\n");
+        write(s->fd, t_buff, strlen(t_buff));
+    }
+
+    while (true) {
+        sprintf(t_buff, "password: \n");
+        write(s->fd, t_buff, strlen(t_buff));
+        read_from_socket(s->fd, r_buff);
+        trim_suffix(r_buff);
+
+        if (strcmp(r_buff, user->password) == 0) {
+            user->logged_in = true;
+
+            s->user = user;
+
+            sprintf(t_buff, "You are now logged in as '%s'.\n", user->name);
+            write(s->fd, t_buff, strlen(t_buff));
+            return;
+        }
+
+        sprintf(t_buff, "Password is incorrect!\n");
+        write(s->fd, t_buff, strlen(t_buff));
+    }
+}
+
+const char *commands = "\n"
+    "---------------------------------------------------\n"
+    "/commands       - List all existing commands\n"
+    "/create-account - Create new user account\n"
+    "/login          - Login in to existing user account\n"
+    "/logout         - Log out of current account\n"
+    "---------------------------------------------------\n";
+
+static bool print_client_message(Session *s)
 {
     memset(r_buff, 0, MAX_MSG_SIZE);
 
-    int bytes_read = read(client, r_buff, MAX_MSG_SIZE);
-    if (bytes_read < 0) {
-        perror("ERROR: read failed");
-        return false;
-    }
-    if (bytes_read == 0) {
-        printf("Client closed connection abnormaly\n");
+    if (!read_from_socket(s->fd, r_buff)) {
+        printf("INFO: Client closed connection abnormaly\n");
         return false;
     }
 
-    trim_suffix(r_buff, bytes_read);
+    trim_suffix(r_buff);
+
+    printf("[#%s] %s\n", s->user ? s->user->name : "", r_buff);
 
     if (strcmp(r_buff, "/quit") == 0) {
-        write(client, STATUS_QUIT, strlen(STATUS_QUIT));
-        printf("Client closed connection via command: %s\n", r_buff);
+        printf("INFO: Client closed connection via command: '%s'\n", r_buff);
         return false;
     }
 
-    printf("[Client] %s\n", r_buff);
+    if (strcmp(r_buff, "/commands") == 0) {
+        write(s->fd, commands, strlen(commands));
+    } else if (strcmp(r_buff, "/create-account") == 0) {
+        if (!s->user) {
+            create_account(s);
+        } else {
+            sprintf(t_buff, "You are already logged in as '%s'", s->user->name);
+            write(s->fd, t_buff, strlen(t_buff));
+        }
+    } else if (strcmp(r_buff, "/login") == 0) {
+        if (!s->user) {
+            log_in(s);
+        } else {
+            sprintf(t_buff, "You are already logged in as '%s'", s->user->name);
+            write(s->fd, t_buff, strlen(t_buff));
+        }
+    } else if (strcmp(r_buff, "/logout") == 0) {
+        log_out(s);
+    }
 
-    write(client, STATUS_OK, strlen(STATUS_OK));
+    print_users();
 
     return true;
 }
 
-static size_t id;
-
 static void *handle_connection(void *arg)
 {
-    printf("thread is here\n");
     int sock = *(int *)arg;
 
-    while (true) {
-        int client = accept(sock, 0, 0);
-        ++id;
-        if (client < 0) {
-            perror("ERROR: accept failed");
-            return NULL;
-        }
+    Session s = {0};
 
-        printf("Connection established with client(%zu)\n", id);
-
-        const char *message = "Connection established\n";
-        write(client, message, strlen(message));
-
-        while (true) {
-            if (!print_client_message(client)) break;
-        }
-
-        if (close(client) < 0) {
-            perror("ERROR: client close failed\n");
-            return NULL;
-        }
-    }
-
-    if (close(sock) < 0) {
-        perror("ERROR: server close failed\n");
+    s.fd = accept(sock, NULL, NULL);
+    if (s.fd < 0) {
+        perror("ERROR: accept failed");
         return NULL;
     }
+
+    printf("INFO: Connection established with client: %d\n", s.fd);
+
+    const char *message = "Connection established ('/commands' for info)\n";
+    write(s.fd, message, strlen(message));
+
+    while (true) {
+        if (!print_client_message(&s)) break;
+    }
+
+    if (close(s.fd) < 0) {
+        perror("ERROR: client close failed\n");
+    }
+
+    return NULL;
 }
 
 int main (void)
@@ -100,6 +236,7 @@ int main (void)
         perror("ERROR: socket failed");
         return 1;
     }
+    printf("INFO: Created socket\n");
 
     const struct sockaddr_in addr = {
         AF_INET,
@@ -112,13 +249,13 @@ int main (void)
         perror("ERROR: bind failed");
         return 1;
     };
+    printf("INFO: Bound socket with address\n");
 
     if (listen(sock, MAX_CONNS) < 0) {
         perror("ERROR: listen failed");
         return 1;
     }
-
-    printf("Server is listening on port %d...\n", PORT);
+    printf("INFO: Server is listening on port %d...\n", PORT);
 
     // NOTE: code for creating multiple fork()'s.
     //       each branch has a copy of the same memory
@@ -155,6 +292,11 @@ int main (void)
     for (int i = 0; i < MAX_CONNS; i++) {
         pthread_join(threads[i], NULL);
     }
+
+    if (close(sock) < 0) {
+        perror("ERROR: server close failed");
+    }
+
     return 0;
 }
 

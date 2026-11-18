@@ -1,11 +1,19 @@
 #include <stdio.h>
 #include <stdbool.h>
-#include <unistd.h>
-#include <string.h>
+#include <sys/poll.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <poll.h>
 
 #include "common.h"
+
+static void read_line(const char *prompt, char *buff)
+{
+    printf("%s", prompt);
+    if (!fgets(buff, MAX_MSG_SIZE, stdin)) {
+        fprintf(stderr, "ERROR: `fgets()` failed\n");
+    }
+}
 
 char t_buff[MAX_MSG_SIZE];
 char r_buff[MAX_MSG_SIZE];
@@ -13,6 +21,8 @@ char r_buff[MAX_MSG_SIZE];
 int main()
 {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
+
+    // char *username = NULL;
 
     const struct sockaddr_in addr = {
         AF_INET,
@@ -22,35 +32,35 @@ int main()
     };
 
     if (connect(sock, (const struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        fprintf(stderr, "ERROR: Could not connect to server\n");
+        perror("ERROR: connect failed");
         return 1;
     }
 
-    while (true) {
-        int bytes_read = read(sock, r_buff, MAX_MSG_SIZE);
-        if (bytes_read < 0) {
-            perror("ERROR: read failed");
-            break;
-        }
+    struct pollfd p = {
+        .fd = sock,
+        .events = POLLIN,
+        .revents = 0,
+    };
 
-        r_buff[bytes_read] = '\0';
-        if (strcmp(r_buff, STATUS_QUIT) == 0) {
-            break;
-        } else if (strcmp(r_buff, STATUS_OK) == 0) {
-            // ok
-        } else {
+    while (true) {
+        poll(&p, 1, POLL_TIMEOUT);
+        if (p.revents & POLLIN) {
+            if (!read_from_socket(sock, r_buff)) break;
+
             printf("[Server] %s", r_buff);
         }
 
-        fgets(t_buff, MAX_MSG_SIZE, stdin);
-        write(sock, t_buff, strlen(t_buff));
+        read_line("> ", t_buff);
+        if (strlen(t_buff) > 0 && strcmp(t_buff, "\n") != 0) {
+            write(sock, t_buff, strlen(t_buff));
+        }
     }
 
     if (close(sock) < 0) {
         perror("ERROR: server close failed\n");
         return 1;
     }
-    printf("Server closed connection\n");
+    printf("Server closed connection successfully\n");
 
     return 0;
 }
